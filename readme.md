@@ -10,7 +10,7 @@ use out_ref::*;
 
 let mut x = 0;
 
-let mut out_x = x.out();
+let mut out_x: Out<'_, u32> = x.out();
 out_x.set(10);
 
 assert_eq!(x, 10);
@@ -24,10 +24,27 @@ use out_ref::*;
 
 let mut x = vec![0, 1, 2];
 
-let mut out_x = x.out();
+let mut out_x: Out<'_, Vec<u32>> = x.out();
 out_x.set(vec![]);
 
 assert_eq!(x, vec![]);
+```
+
+This crate also introduces `LinearOut`, this type must be set before it drops, or else it ***aborts the process***.
+
+```rust
+let mut x = 10;
+let mut lout_x: LinearOut<'_, u32> = x.linear_out();
+
+lout_x.set(20);
+
+assert_eq!(x, 20);
+```
+
+This code will abort the process because `lout_x` was not set
+```rust
+let mut x = 10;
+let mut lout_x: LinearOut<'_, u32> = x.linear_out();
 ```
 
 ## Feature flags
