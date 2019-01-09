@@ -1,0 +1,17 @@
+clear
+# echo "cargo check"
+# cargo check
+# echo "cargo check --features std"
+# cargo check --features std
+# echo "cargo check --features nightly"
+# cargo check --features nightly
+# echo "cargo check --features \"nightly, std\""
+# cargo check --features "nightly, std"
+echo "cargo test"
+cargo test
+echo "cargo test --features std"
+cargo test --features std
+echo "cargo test --features nightly"
+cargo test --features nightly
+echo "cargo test --features \"nightly, std\""
+cargo test --features "nightly, std"
