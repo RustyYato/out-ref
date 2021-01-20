@@ -10,7 +10,7 @@ mod nightly {
 
         out_x.set(10);
 
-        let x = unsafe { x.into_inner() };
+        let x = unsafe { x.assume_init() };
         assert_eq!(x, 10);
     }
 }

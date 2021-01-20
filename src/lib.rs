@@ -1,65 +1,100 @@
 #![forbid(missing_docs)]
-// #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "nightly", feature(core_intrinsics, coerce_unsized, unsize, maybe_uninit))]
+#![cfg_attr(feature = "nightly", feature(coerce_unsized, unsize))]
 
-/*!
- * This crate brings a safe out reference to Rust
- * 
- *  See readme for more info
- */
-
-#[cfg(not(feature = "std"))]
-extern crate core as std;
+//! This crate brings out references to Rust, this crate has `no_std` support
+//! Out reference *never* read values behind the reference
+//!
+//! ```rust
+//! use out_reference::*;
+//!
+//! let mut x = 0;
+//!
+//! let mut out_x: Out<'_, u32> = x.out();
+//! out_x.set(10);
+//!
+//! assert_eq!(x, 10);
+//! ```
+//!
+//! Note that setting a value does not drop the old value,
+//! as that would require at least 1 read of the value behind the pointer
+//!
+//! So, the code below leaks the vector
+//! ```rust
+//! use out_reference::*;
+//!
+//! let mut x = vec![0, 1, 2];
+//!
+//! let mut out_x: Out<'_, Vec<u32>> = x.out();
+//! out_x.set(vec![]);
+//!
+//! assert_eq!(x, vec![]);
+//! ```
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "nightly")]
-use std::mem::MaybeUninit;
-use std::marker::PhantomData as PD;
-/**
- * An Out Reference, you can only write to this reference using the `set` method
- * and reborrow this reference with the `borrow` method
- */
+use core::mem::MaybeUninit;
+use core::marker::PhantomData;
+
+/// An Out Reference, you can only write to this reference using the `set` method
+/// and reborrow this reference with the `borrow` method. It isn't safe to read from
+/// an `Out` pointer.
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct Out<'a, T: ?Sized>(*mut T, PD<&'a mut T>);
+pub struct Out<'a, T: ?Sized>(*mut T, PhantomData<&'a mut T>);
+
+/// Writes a value to the reference without dropping the old value
+#[inline(always)]
+pub fn write<T>(ptr: &mut T, value: T) {
+    Out::from_mut(ptr).set(value)
+}
 
 impl<'a, T> Out<'a, T> {
     /// To allow writing to the value inside the MaybeUninit
-    #[cfg(feature = "nightly")]
+    #[inline(always)]
     pub fn from_maybe_uninit(maybe_uninit: &mut MaybeUninit<T>) -> Out<'_, T> {
-        Out(maybe_uninit.as_mut_ptr(), PD)
+        Out(maybe_uninit.as_mut_ptr(), PhantomData)
     }
 }
 
 impl<'a, T: ?Sized> Out<'a, T> {
-    /// Create Out from raw ptr
-    /// 
-    /// Note: will panic if the raw pointer is null
-    pub fn from_raw(ptr: *mut T) -> Out<'a, T> {
-        if ptr.is_null() {
-            panic!("Tried to create a Out reference from a raw pointer")
-        }
-        Out(ptr, PD)
+    /// Create `Out` from exclusive reference
+    #[inline(always)]
+    pub fn from_mut(value: &'a mut T) -> Self {
+        unsafe { Self::from_raw(value) }
     }
-    /// Create Out from raw ptr
-    /// 
-    /// Note: the raw pointer must not be null
-    pub unsafe fn from_raw_unchecked(ptr: *mut T) -> Out<'a, T> {
-        Out(ptr, PD)
+
+    /// Create `Out` from raw pointer
+    #[inline(always)]
+    pub unsafe fn from_raw(ptr: *mut T) -> Out<'a, T> {
+        Self(ptr, PhantomData)
     }
 
     /// Reborrows the `Out` reference
-    pub fn borrow(&mut self) -> Out<'_, T> { Out(self.0, PD) }
+    #[inline(always)]
+    pub fn borrow(&mut self) -> Out<'_, T> { Out(self.0, PhantomData) }
 
     /// Convert this `Out` reference into a raw pointer
+    /// 
+    /// see `as_mut_ptr` for safety documentation of the this pointer.
+    #[inline(always)]
     pub fn into_raw(self) -> *mut T { self.0 }
+
+    /// Get a raw pointer to the `Out`, it is only safe to write to this pointer
+    /// unless specified otherwise by the creator of this `Out` reference
+    /// 
+    /// i.e. it's safe to read to an `Out<'_, T>` that was created from a `&mut T`
+    /// and it's safe to read from a `Out<'_, T>` that was created from a
+    /// `&mut MaybeUninit<T>` after it has been initialized.
+    #[inline(always)]
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.0
+    }
 }
 
 impl<'a, T> Out<'a, T> {
-    /// Set the value behind the `Out` reference without dropping the old value 
+    /// Set the value behind the `Out` reference *without dropping the old value *
     pub fn set(&mut self, value: T) { unsafe { std::ptr::write(self.0, value) } }
 }
 
@@ -67,70 +102,30 @@ impl<'a, T> Out<'a, T> {
 pub trait OutMethod {
     /// creates an Out ref
     #[inline(always)]
-    fn out(&mut self) -> Out<'_, Self> { Out(self, PD) }
-
-    /// creates an LinearOut ref
-    #[inline(always)]
-    #[cfg(any(feature = "std", feature = "nightly"))]
-    fn linear_out(&mut self) -> LinearOut<'_, Self> { OutMethod::out(self).into_linear() }
+    fn out(&mut self) -> Out<'_, Self> { Out::from_mut(self) }
 }
 
 impl<T: ?Sized> OutMethod for T {}
 
 impl<'a, T: ?Sized> From<&'a mut T> for Out<'a, T> {
+    #[inline(always)]
     fn from(ptr: &'a mut T) -> Self {
-        Out(ptr, PD)
+        Self::from_mut(ptr)
     }
 }
 
-#[cfg(any(feature = "std", feature = "nightly"))]
-pub use self::linear::*;
+impl<'a, T> From<&'a mut MaybeUninit<T>> for Out<'a, T> {
+    #[inline(always)]
+    fn from(ptr: &'a mut MaybeUninit<T>) -> Self {
+        Self::from_maybe_uninit(ptr)
+    }
+}
 
-#[cfg(any(feature = "std", feature = "nightly"))]
-mod linear {
+#[cfg(feature = "nightly")]
+mod nightly {
+    use std::ops::CoerceUnsized;
+    use std::marker::Unsize;
     use super::*;
 
-    /// `LienarOut` represents a linear type that must be written to
-    /// exactly once, if this type is not written to it will ***abort the process***
-    pub struct LinearOut<'a, T: ?Sized>(Out<'a, T>);
-
-    impl<'a, T> LinearOut<'a, T> {
-        /// Set a value to the linear type
-        pub fn set(mut self, value: T) {
-            self.0.set(value);
-            std::mem::forget(self)
-        }
-    }
-
-    impl<'a, T: ?Sized> Drop for LinearOut<'a, T> {
-        fn drop(&mut self) {
-            #[cfg(feature = "std")]
-            std::process::abort();
-
-            #[cfg(all(
-                feature = "nightly",
-                not(feature = "std")
-            ))]
-            unsafe { std::intrinsics::abort(); }
-        }
-    }
-
-    impl<'a, T: ?Sized> Out<'a, T> {
-        /// Convert an `Out` reference into a `LinearOut` reference
-        pub fn into_linear(self) -> LinearOut<'a, T> {
-            LinearOut(self)
-        }
-    }
-
-    #[cfg(feature = "nightly")]
-    pub use self::nightly::*;
-
-    #[cfg(feature = "nightly")]
-    mod nightly {
-        use std::ops::CoerceUnsized;
-        use std::marker::Unsize;
-        use super::*;
-
-        impl<'a, T: Unsize<U>, U: ?Sized> CoerceUnsized<Out<'a, U>> for Out<'a, T> {}
-    }
+    impl<'a, T: Unsize<U>, U: ?Sized> CoerceUnsized<Out<'a, U>> for Out<'a, T> {}
 }
