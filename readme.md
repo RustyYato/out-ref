@@ -1,4 +1,4 @@
-# out-ref
+# out-reference
 
 This crate brings out references to Rust, this crate has `no_std` support
 Out reference *never* read values behind the reference
